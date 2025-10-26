@@ -1,0 +1,163 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    env_file:
+      - ./pia.env
+    environment:
+      VPN_SERVICE_PROVIDER: private internet access
+      VPN_TYPE: openvpn
+      SERVER_REGIONS: "${PIA_LOC:-Switzerland}"
+      PORT_FORWARD_ONLY: "on"
+      VPN_PORT_FORWARDING: "on"
+      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+      VPN_PORT_FORWARDING_UP_COMMAND: /bin/sh -c 'wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'
+      OPENVPN_PROTOCOL: udp
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+    volumes:
+      - ./config/gluetun:/gluetun
+    ports:
+      - 8080:8080/tcp
+      - 8082:8082/tcp
+      - 5299:5299/tcp
+      - 9696:9696/tcp
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    depends_on:
+      - gluetun
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+      WEBUI_PORT: "8080"
+      UMASK: "002"
+    volumes:
+      - ./config/qbittorrent:/config
+      - /mnt/stuff/Downloads:/downloads
+
+  qbit_manage:
+    image: ghcr.io/stuffanthings/qbit_manage:latest
+    container_name: qbit_manage
+    restart: unless-stopped
+    depends_on:
+      - gluetun
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+      QBT_WEB_SERVER: "true"
+      QBT_PORT: "8082"
+      QBT_HOST: "http://qbittorrent:8080"
+      QBT_CONFIG_DIR: /config
+      QBT_SCHEDULE: "3600"
+      QBT_QBIT_USERNAME: "${QBIT_MANAGE_QBT_USERNAME:-admin}"
+      QBT_QBIT_PASSWORD: "${QBIT_MANAGE_QBT_PASSWORD:-adminadmin}"
+    volumes:
+      - ./config/qbit_manage:/config
+      - /mnt/stuff/Downloads:/downloads
+
+  lazylibrarian:
+    image: lscr.io/linuxserver/lazylibrarian:latest
+    container_name: lazylibrarian
+    restart: unless-stopped
+    depends_on:
+      - gluetun
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+    volumes:
+      - ./config/lazylibrarian:/config
+      - /mnt/stuff/Downloads:/downloads
+
+  prowlarr:
+    image: bitlessbyte/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    depends_on:
+      - gluetun
+    network_mode: "service:gluetun"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+    volumes:
+      - ./config/prowlarr:/config
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+      VERSION: docker
+      PLEX_CLAIM: ""
+    volumes:
+      - ./config/plex:/config
+      - /mnt/stuff/Downloads:/data/downloads
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: America/Los_Angeles
+      PORT: "13378"
+      HOST: "0.0.0.0"
+    user: "1000:1000"
+    volumes:
+      - ./config/audiobookshelf/config:/config
+      - ./config/audiobookshelf/metadata:/metadata
+      - /mnt/stuff/Downloads:/audiobooks
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Los_Angeles
+      HOMEPAGE_ALLOWED_HOSTS: localhost,127.0.0.1
+      HOMEPAGE_VAR_QBITTORRENT_URL: http://localhost:8080
+      HOMEPAGE_VAR_PROWLARR_URL: http://localhost:9696
+      HOMEPAGE_VAR_LAZYLIBRARIAN_URL: http://localhost:5299
+      HOMEPAGE_VAR_QBIT_MANAGE_URL: http://localhost:8082
+      HOMEPAGE_VAR_PLEX_URL: http://localhost:32400/web/index.html
+      HOMEPAGE_VAR_AUDIOBOOKSHELF_URL: http://localhost:13378
+      HOMEPAGE_VAR_GLUETUN_API: http://localhost:8000/v1/openvpn/status
+    volumes:
+      - ./config/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - 9443:9443
+      - 9000:9000
+    environment:
+      TZ: America/Los_Angeles
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/portainer:/data
